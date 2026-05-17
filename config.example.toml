@@ -1,0 +1,33 @@
+# Copy to bot.toml and fill in real outcome token IDs from Gamma / the Polymarket UI.
+clob_host = "https://clob.polymarket.com"
+
+[wallet]
+# eoa | proxy | gnosis_safe
+signature_type = "eoa"
+
+[market.outcome_a]
+label = "Up"
+token_id = "REPLACE_WITH_UP_TOKEN_ID_DECIMAL_STRING"
+
+[market.outcome_b]
+label = "Down"
+token_id = "REPLACE_WITH_DOWN_TOKEN_ID_DECIMAL_STRING"
+
+[strategy]
+# Your model's fair probability that outcome A (e.g. Up) resolves YES.
+fair_probability_a = "0.58"
+# Require ask_up + ask_down <= 1 - min_locked_edge (locked arb surplus).
+min_locked_edge = "0.015"
+# Hard ceiling on approximate USDC spent this cycle (see logs for notion).
+max_usdc_notional = "250"
+# Maximum paired hedge size on EACH outcome before directional tilt.
+base_pair_shares = "40"
+# Extra shares allowed on the favored outcome beyond the hedge pair.
+max_tilt_extra_shares = "80"
+# Tilt only when (edge_favored - edge_other) >= tilt_edge_gap.
+tilt_edge_gap = "0.02"
+# Passive maker positioning: subtract N ticks from best ask for BUY limits (0 = join touch).
+price_improve_ticks = 0
+
+[polling]
+interval_ms = 2000
