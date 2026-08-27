@@ -141,6 +141,26 @@ pub fn slice_due_at(window: Duration, slice_idx: u32, slices: u32) -> Duration {
     window.mul_f64(f64::from(slice_idx) / f64::from(slices))
 }
 
+/// Clip sizes for both legs, or `(0, 0)` if either side is below `min_order_size`.
+///
+/// Skipping both keeps the hedge intact: a dust clip on one outcome must not
+/// leave a full-size BUY on the other.
+pub fn paired_slice(
+    qty_a: Decimal,
+    qty_b: Decimal,
+    slice_idx: u32,
+    slices: u32,
+    min_order_size: Decimal,
+) -> (Decimal, Decimal) {
+    let a = slice_quantity(qty_a, slice_idx, slices);
+    let b = slice_quantity(qty_b, slice_idx, slices);
+    if a < min_order_size || b < min_order_size {
+        (Decimal::ZERO, Decimal::ZERO)
+    } else {
+        (a, b)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,5 +217,19 @@ mod tests {
     #[test]
     fn single_slice_is_full_size() {
         assert_eq!(slice_quantity(dec!(12.34), 0, 1), dec!(12.34));
+    }
+
+    #[test]
+    fn paired_slice_skips_both_when_one_leg_is_dust() {
+        let (a, b) = paired_slice(dec!(40), dec!(5), 0, 2, dec!(5));
+        assert_eq!(a, Decimal::ZERO);
+        assert_eq!(b, Decimal::ZERO);
+    }
+
+    #[test]
+    fn paired_slice_posts_when_both_legs_meet_minimum() {
+        let (a, b) = paired_slice(dec!(40), dec!(40), 0, 2, dec!(5));
+        assert_eq!(a, dec!(20));
+        assert_eq!(b, dec!(20));
     }
 }

@@ -19,7 +19,7 @@ use crate::config::{BotConfig, SignatureKind};
 use crate::execution;
 use crate::market_data::{best_ask, passive_buy_limit};
 use crate::strategy::{plan_sizes, SizePlan, StrategyParams};
-use crate::twap::{slice_due_at, slice_quantity, QuoteSample, QuoteTwap};
+use crate::twap::{paired_slice, slice_due_at, QuoteSample, QuoteTwap};
 use crate::ui::DashboardState;
 
 struct LiveTrading {
@@ -237,21 +237,18 @@ impl Engine {
     ) -> Result<String> {
         let (slice_idx, slices, qty_a, qty_b) = {
             let run = self.exec.as_ref().expect("TWAP run");
-            let qty_a = slice_quantity(run.plan.qty_a, run.next_slice, run.slices);
-            let qty_b = slice_quantity(run.plan.qty_b, run.next_slice, run.slices);
+            let (qty_a, qty_b) = paired_slice(
+                run.plan.qty_a,
+                run.plan.qty_b,
+                run.next_slice,
+                run.slices,
+                live.min_order_size,
+            );
             (run.next_slice, run.slices, qty_a, qty_b)
         };
 
-        let clip_a = if qty_a >= live.min_order_size {
-            qty_a
-        } else {
-            Decimal::ZERO
-        };
-        let clip_b = if qty_b >= live.min_order_size {
-            qty_b
-        } else {
-            Decimal::ZERO
-        };
+        let clip_a = qty_a;
+        let clip_b = qty_b;
 
         if self.dry_run {
             info!(
