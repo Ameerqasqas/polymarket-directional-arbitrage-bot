@@ -15,4 +15,5 @@ fn params() -> StrategyParams {
 fn fair_probability_zero_and_one_are_allowed() {
     assert!(plan_sizes(dec!(0.48), dec!(0.49), dec!(0), &params(), dec!(1)).is_some());
     assert!(plan_sizes(dec!(0.48), dec!(0.49), dec!(1), &params(), dec!(1)).is_some());
+    assert!(plan_sizes(dec!(0.48), dec!(0.49), dec!(0.5), &params(), dec!(1)).is_some());
 }
