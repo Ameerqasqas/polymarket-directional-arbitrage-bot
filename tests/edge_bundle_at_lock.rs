@@ -12,4 +12,5 @@ fn bundle_exactly_at_locked_edge_is_tradable() {
     };
     let plan = plan_sizes(dec!(0.49), dec!(0.49), dec!(0.50), &params, dec!(1));
     assert!(plan.is_some(), "ask_a + ask_b == 1 - min_locked_edge must still quote");
+    assert_eq!(plan.unwrap().qty_a, plan_sizes(dec!(0.49), dec!(0.49), dec!(0.50), &params, dec!(1)).unwrap().qty_b);
 }
