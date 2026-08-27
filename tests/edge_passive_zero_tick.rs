@@ -6,4 +6,5 @@ use rust_decimal_macros::dec;
 fn passive_buy_limit_rejects_non_positive_tick() {
     assert!(passive_buy_limit(dec!(0.50), Decimal::ZERO, 0).is_err());
     assert!(passive_buy_limit(dec!(0.50), dec!(-0.01), 0).is_err());
+    assert!(passive_buy_limit(dec!(0.50), dec!(0.01), 0).is_ok());
 }
