@@ -19,7 +19,7 @@ use crate::config::{BotConfig, SignatureKind};
 use crate::execution;
 use crate::market_data::{best_ask, passive_buy_limit};
 use crate::strategy::{plan_sizes, SizePlan, StrategyParams};
-use crate::twap::{paired_slice, slice_due_at, QuoteSample, QuoteTwap};
+use crate::twap::{leftover_clips_expired, paired_slice, slice_due_at, QuoteSample, QuoteTwap};
 use crate::ui::DashboardState;
 
 struct LiveTrading {
@@ -200,19 +200,34 @@ impl Engine {
         px_a: Decimal,
         px_b: Decimal,
     ) -> Result<String> {
-        if let Some(run) = &self.exec {
+        if self.exec.is_some() {
+            let (elapsed, next_slice, slices, has_open) = {
+                let run = self.exec.as_ref().expect("TWAP run");
+                (
+                    now.saturating_duration_since(run.started),
+                    run.next_slice,
+                    run.slices,
+                    run.open_clip.is_some(),
+                )
+            };
+            if leftover_clips_expired(elapsed, self.cfg.twap.window()) && !has_open {
+                self.abort_run(
+                    "TWAP window elapsed; skipping leftover clips instead of bursting",
+                );
+                return Ok("TWAP window elapsed — leftover clips skipped".into());
+            }
             if plan.is_none() {
                 self.abort_run("arb window closed; aborting remaining TWAP clips");
                 return Ok("TWAP aborted — bundle no longer locked".into());
             }
-            let due = slice_due_at(self.cfg.twap.window(), run.next_slice, run.slices);
-            if now.saturating_duration_since(run.started) >= due {
+            let due = slice_due_at(self.cfg.twap.window(), next_slice, slices);
+            if elapsed >= due {
                 return self.fire_next_clip(live, px_a, px_b).await;
             }
             return Ok(format!(
                 "TWAP in progress — next clip {}/{}",
-                run.next_slice + 1,
-                run.slices
+                next_slice + 1,
+                slices
             ));
         }
 
