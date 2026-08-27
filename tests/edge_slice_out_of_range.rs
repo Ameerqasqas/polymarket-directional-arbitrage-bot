@@ -6,4 +6,5 @@ use rust_decimal_macros::dec;
 fn slice_index_past_the_end_is_zero() {
     assert_eq!(slice_quantity(dec!(10), 5, 3), Decimal::ZERO);
     assert_eq!(slice_quantity(dec!(10), 99, 6), Decimal::ZERO);
+    assert_eq!(slice_quantity(dec!(10), 0, 3), dec!(3.33));
 }
