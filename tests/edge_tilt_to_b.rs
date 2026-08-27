@@ -17,4 +17,5 @@ fn tilts_to_b_when_model_prefers_b() {
     assert_eq!(plan.favored, FavoredOutcome::B);
     assert!(plan.qty_b > plan.qty_a);
     assert_eq!(plan.qty_a, plan.paired_shares);
+    assert!(plan.qty_b > plan.paired_shares);
 }
