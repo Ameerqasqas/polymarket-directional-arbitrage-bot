@@ -1,6 +1,7 @@
 //! Bot configuration loaded from TOML.
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rust_decimal::Decimal;
@@ -18,13 +19,13 @@ pub enum SignatureKind {
     GnosisSafe,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct WalletConfig {
     #[serde(default)]
     pub signature_type: SignatureKind,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TokenRef {
     /// Human-readable label for logs only (e.g. `Up`, `Down`).
     pub label: String,
@@ -32,13 +33,13 @@ pub struct TokenRef {
     pub token_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MarketConfig {
     pub outcome_a: TokenRef,
     pub outcome_b: TokenRef,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct StrategyConfig {
     /// Model-implied probability that outcome **A** resolves YES (0–1).
     pub fair_probability_a: Decimal,
@@ -56,7 +57,7 @@ pub struct StrategyConfig {
     pub price_improve_ticks: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PollingConfig {
     #[serde(default = "default_interval_ms")]
     pub interval_ms: u64,
@@ -74,7 +75,52 @@ fn default_interval_ms() -> u64 {
     1500
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct TwapConfig {
+    /// Rolling window used to average asks before sizing (seconds).
+    #[serde(default = "default_twap_window_secs")]
+    pub window_secs: u64,
+    /// Child clips spread across the same window once TWAP is ready.
+    #[serde(default = "default_twap_slices")]
+    pub slices: u32,
+    /// Wait this long after a TWAP window finishes before starting another.
+    #[serde(default)]
+    pub cooldown_secs: u64,
+}
+
+impl Default for TwapConfig {
+    fn default() -> Self {
+        Self {
+            window_secs: default_twap_window_secs(),
+            slices: default_twap_slices(),
+            cooldown_secs: 0,
+        }
+    }
+}
+
+fn default_twap_window_secs() -> u64 {
+    60
+}
+
+fn default_twap_slices() -> u32 {
+    6
+}
+
+impl TwapConfig {
+    pub fn window(&self) -> Duration {
+        Duration::from_secs(self.window_secs.max(1))
+    }
+
+    pub fn slice_count(&self) -> u32 {
+        self.slices.max(1)
+    }
+
+    pub fn cooldown(&self) -> Duration {
+        Duration::from_secs(self.cooldown_secs)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct BotConfig {
     /// `https://clob.polymarket.com` (USDC.e / legacy) or `https://clob-v2.polymarket.com` (pUSD / V2).
     #[serde(default = "default_clob_host")]
@@ -85,6 +131,8 @@ pub struct BotConfig {
     pub strategy: StrategyConfig,
     #[serde(default)]
     pub polling: PollingConfig,
+    #[serde(default)]
+    pub twap: TwapConfig,
 }
 
 fn default_clob_host() -> String {
@@ -95,10 +143,7 @@ impl BotConfig {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let raw = std::fs::read_to_string(path).with_context(|| {
-            format!(
-                "failed to read config file {}",
-                path.display()
-            )
+            format!("failed to read config file {}", path.display())
         })?;
         toml::from_str(&raw).with_context(|| format!("failed to parse {}", path.display()))
     }

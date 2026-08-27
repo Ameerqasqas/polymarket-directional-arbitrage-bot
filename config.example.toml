@@ -30,4 +30,13 @@ tilt_edge_gap = "0.02"
 price_improve_ticks = 0
 
 [polling]
+# Book sample rate. Strategy sizing uses the 60s TWAP of these samples, not each tick.
 interval_ms = 2000
+
+[twap]
+# Time-weighted average window for asks (seconds). Daemon waits until this is full.
+window_secs = 60
+# Child BUY clips spread evenly across the window once TWAP is ready.
+slices = 6
+# Optional pause after a finished TWAP window before starting another.
+cooldown_secs = 0

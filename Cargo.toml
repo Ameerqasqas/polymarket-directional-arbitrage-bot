@@ -18,3 +18,5 @@ toml = "0.8"
 rust_decimal = { version = "1.41", features = ["serde"] }
 rust_decimal_macros = "1.40"
 alloy = { version = "1.6", default-features = false, features = ["signer-local", "signers"] }
+ratatui = "0.29"
+crossterm = "0.28"

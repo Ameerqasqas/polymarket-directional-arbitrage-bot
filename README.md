@@ -6,20 +6,22 @@ Rust bot that targets **binary Polymarket markets** (two complementary outcomes 
 
 1. **Discover tokens** — Each outcome is its own ERC-1155-style outcome token on Polymarket’s CLOB. You need both decimal token IDs (from Gamma / the UI / API). Put them in `bot.toml`.
 2. **Pull books** — For each outcome token, fetch the consolidated book via `GET /book` (wrapped by [`polymarket-client-sdk`](https://github.com/Polymarket/rs-clob-client)).
-3. **Check arb shell** — Let \(a\) be the best ask for outcome A and \(b\) the best ask for outcome B (USDC cost per share). If \(a + b \le 1 - \varepsilon\) with your configured **`min_locked_edge`** \(\varepsilon\), there is a classical paired discount versus \$1 payoff at resolution (before fees / latency risk).
-4. **Score directional edge** — Compare your **`fair_probability_a`** (modeled chance A wins) to the asks:
-   - \(\text{edge}_A = p^\* - a\)
-   - \(\text{edge}_B = (1 - p^\*) - b\)
+3. **Check arb shell** — Let \(a\) be the **60s TWAP** of the best ask for outcome A and \(b\) the TWAP ask for outcome B. If \(a + b \le 1 - \varepsilon\) with your configured **`min_locked_edge`** \(\varepsilon\), there is a classical paired discount versus \$1 payoff at resolution (before fees / latency risk). Live asks still drive the **limit price**; TWAP drives **whether** to quote and **how much**.
+4. **Score directional edge** — Compare your **`fair_probability_a`** (modeled chance A wins) to the TWAP asks:
+   - \(\text{edge}_A = p^\* - a_{\text{TWAP}}\)
+   - \(\text{edge}_B = (1 - p^\*) - b_{\text{TWAP}}\)
 5. **Size**
    - Start from a **paired hedge** \(q\) shares on **both** sides (capped by **`base_pair_shares`** and **`max_usdc_notional`**).
    - If \(\max(\text{edge}_A,\text{edge}_B) - \min(\dots) \ge\) **`tilt_edge_gap`**, add up to **`max_tilt_extra_shares`** on the favored outcome (still respecting **`max_usdc_notional`**).
-6. **Quote limits only** — The bot never sends market-style IOC/FOK paths from this workflow; it builds **`OrderType::GTC`** BUY limits. Prices default to **best ask**, optionally **`price_improve_ticks`** behind the touch for maker preference.
-7. **Sign & POST** — With `POLYMARKET_PRIVATE_KEY` set, authenticate against the configured **`clob_host`**, EIP-712-sign each leg, and `POST /order`.
+6. **TWAP execution (daemon)** — After the 60s window is full, the bot splits the plan into **`twap.slices`** child GTC BUY clips (default 6, one every 10s) across that window. If the TWAP bundle stops locking, remaining clips are aborted.
+7. **Quote limits only** — The bot never sends market-style IOC/FOK paths from this workflow; it builds **`OrderType::GTC`** BUY limits. Prices default to **live best ask**, optionally **`price_improve_ticks`** behind the touch for maker preference.
+8. **Sign & POST** — With `POLYMARKET_PRIVATE_KEY` set, authenticate against the configured **`clob_host`**, EIP-712-sign each clip, and `POST /order`.
 
 ### Strategy intuition
 
 - **Arb core**: \(q\) matched shares behave like a classical arb sleeve — bounded downside versus \$1 collateral logic at settlement (subject to venue rules and fees).
 - **Tilt sleeve**: Additional shares on the high-edge outcome inject convex payout if your probability estimate leads the market’s slow repricing (common in fast crypto scenarios).
+- **60s TWAP**: Daemon mode averages asks over `[twap] window_secs` (default 60) so a single print does not resize the whole book, then slices that plan across the window instead of dumping full size every poll.
 
 ### Configure & run
 
@@ -33,10 +35,13 @@ copy config.example.toml bot.toml
 # edit bot.toml + export POLYMARKET_PRIVATE_KEY for live mode
 
 $env:RUST_LOG="info"
-cargo run --release -- --config bot.toml --dry-run   # logs plan only
-cargo run --release -- --config bot.toml             # single cycle live
-cargo run --release -- --config bot.toml --daemon    # repeat using polling.interval_ms
+cargo run --release -- --config bot.toml --dry-run   # one-shot panel, no orders
+cargo run --release -- --config bot.toml             # one-shot live (full size, 1 clip)
+cargo run --release -- --config bot.toml --daemon    # live TUI, 60s TWAP + sliced clips
+cargo run --release -- --config bot.toml --daemon --plain  # same engine, ASCII panel
 ```
+
+`--daemon` on a TTY opens the dashboard (quotes, 60s TWAP, clip gauge, log). Press `q` or Ctrl+C to exit. Use `--plain` to print the panel on stdout instead.
 
 Environment:
 
