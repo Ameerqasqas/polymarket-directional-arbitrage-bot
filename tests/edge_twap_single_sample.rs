@@ -15,4 +15,5 @@ fn single_sample_twap_equals_that_print() {
     assert_eq!(q.ask_a, dec!(0.41));
     assert_eq!(q.ask_b, dec!(0.55));
     assert_eq!(q.sample_count, 1);
+    assert_eq!(q.bundle(), dec!(0.96));
 }
