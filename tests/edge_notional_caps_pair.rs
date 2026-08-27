@@ -13,4 +13,5 @@ fn usdc_notional_cap_shrinks_paired_size_below_base() {
     let plan = plan_sizes(dec!(0.48), dec!(0.49), dec!(0.50), &params, dec!(1)).unwrap();
     assert!(plan.paired_shares < params.base_pair_shares);
     assert!(plan.paired_shares * (dec!(0.48) + dec!(0.49)) <= params.max_usdc_notional);
+    assert_eq!(plan.qty_a, plan.qty_b);
 }
