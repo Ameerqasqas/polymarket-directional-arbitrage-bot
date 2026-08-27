@@ -37,6 +37,31 @@ pub fn trunc_shares(x: Decimal) -> Decimal {
     x.max(Decimal::ZERO).trunc_with_scale(SHARE_DECIMALS)
 }
 
+/// False when asks, model probability, or caps cannot form a locked pair.
+pub fn inputs_are_tradable(
+    ask_a: Decimal,
+    ask_b: Decimal,
+    fair_prob_a: Decimal,
+    params: &StrategyParams,
+) -> bool {
+    if ask_a <= Decimal::ZERO || ask_b <= Decimal::ZERO {
+        return false;
+    }
+    if fair_prob_a < Decimal::ZERO || fair_prob_a > Decimal::ONE {
+        return false;
+    }
+    if params.min_locked_edge <= Decimal::ZERO || params.min_locked_edge >= Decimal::ONE {
+        return false;
+    }
+    if params.max_usdc_notional <= Decimal::ZERO || params.base_pair_shares <= Decimal::ZERO {
+        return false;
+    }
+    if params.tilt_edge_gap < Decimal::ZERO || params.max_tilt_extra_shares < Decimal::ZERO {
+        return false;
+    }
+    true
+}
+
 /// Decide quantities only (limit prices are derived later from the book).
 pub fn plan_sizes(
     ask_a: Decimal,
@@ -45,6 +70,10 @@ pub fn plan_sizes(
     params: &StrategyParams,
     min_order_size: Decimal,
 ) -> Option<SizePlan> {
+    if !inputs_are_tradable(ask_a, ask_b, fair_prob_a, params) {
+        return None;
+    }
+
     let one = Decimal::ONE;
     let bundle = ask_a + ask_b;
 
@@ -160,5 +189,29 @@ mod tests {
         assert_eq!(plan.favored, FavoredOutcome::A);
         assert!(plan.qty_a > plan.qty_b);
         assert_eq!(plan.qty_b, plan.paired_shares);
+    }
+
+    #[test]
+    fn rejects_zero_or_negative_asks() {
+        let p = params();
+        assert!(plan_sizes(dec!(0), dec!(0.40), dec!(0.50), &p, dec!(1)).is_none());
+        assert!(plan_sizes(dec!(-0.10), dec!(0.40), dec!(0.50), &p, dec!(1)).is_none());
+        assert!(plan_sizes(dec!(0.40), dec!(0), dec!(0.50), &p, dec!(1)).is_none());
+    }
+
+    #[test]
+    fn rejects_fair_probability_outside_unit_interval() {
+        let p = params();
+        assert!(plan_sizes(dec!(0.45), dec!(0.45), dec!(-0.01), &p, dec!(1)).is_none());
+        assert!(plan_sizes(dec!(0.45), dec!(0.45), dec!(1.01), &p, dec!(1)).is_none());
+    }
+
+    #[test]
+    fn rejects_locked_edge_outside_open_unit_interval() {
+        let mut p = params();
+        p.min_locked_edge = dec!(0);
+        assert!(plan_sizes(dec!(0.40), dec!(0.40), dec!(0.50), &p, dec!(1)).is_none());
+        p.min_locked_edge = dec!(1);
+        assert!(plan_sizes(dec!(0.40), dec!(0.40), dec!(0.50), &p, dec!(1)).is_none());
     }
 }
