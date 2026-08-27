@@ -145,6 +145,81 @@ impl BotConfig {
         let raw = std::fs::read_to_string(path).with_context(|| {
             format!("failed to read config file {}", path.display())
         })?;
-        toml::from_str(&raw).with_context(|| format!("failed to parse {}", path.display()))
+        let cfg: Self = toml::from_str(&raw)
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let a = self.market.outcome_a.token_id.trim();
+        let b = self.market.outcome_b.token_id.trim();
+        if a.is_empty() || b.is_empty() {
+            anyhow::bail!("outcome token_id must not be empty");
+        }
+        if a == b {
+            anyhow::bail!(
+                "outcome_a and outcome_b must be different tokens (both are {a})"
+            );
+        }
+        if !a.chars().all(|c| c.is_ascii_digit()) || !b.chars().all(|c| c.is_ascii_digit()) {
+            anyhow::bail!("outcome token_id must be a decimal digit string (not a placeholder)");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_toml(token_a: &str, token_b: &str) -> String {
+        format!(
+            r#"
+clob_host = "https://clob.polymarket.com"
+[market.outcome_a]
+label = "Up"
+token_id = "{token_a}"
+[market.outcome_b]
+label = "Down"
+token_id = "{token_b}"
+[strategy]
+fair_probability_a = "0.58"
+min_locked_edge = "0.015"
+max_usdc_notional = "250"
+base_pair_shares = "40"
+max_tilt_extra_shares = "80"
+tilt_edge_gap = "0.02"
+price_improve_ticks = 0
+"#
+        )
+    }
+
+    #[test]
+    fn rejects_identical_outcome_tokens() {
+        let cfg: BotConfig = toml::from_str(&sample_toml("123", "123")).unwrap();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("different tokens"), "{err}");
+    }
+
+    #[test]
+    fn rejects_placeholder_token_ids() {
+        let cfg: BotConfig =
+            toml::from_str(&sample_toml("REPLACE_WITH_UP_TOKEN_ID_DECIMAL_STRING", "456")).unwrap();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("placeholder"), "{err}");
+    }
+
+    #[test]
+    fn rejects_empty_token_ids() {
+        let cfg: BotConfig = toml::from_str(&sample_toml("   ", "456")).unwrap();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn accepts_distinct_numeric_tokens() {
+        let cfg: BotConfig = toml::from_str(&sample_toml("123", "456")).unwrap();
+        cfg.validate().unwrap();
     }
 }
