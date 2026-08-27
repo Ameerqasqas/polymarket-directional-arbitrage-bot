@@ -32,6 +32,31 @@ struct TwapRun {
     plan: SizePlan,
     next_slice: u32,
     slices: u32,
+    /// In-flight clip after one leg filled and the other failed.
+    open_clip: Option<ClipFill>,
+}
+
+#[derive(Debug, Clone)]
+struct ClipFill {
+    id_a: Option<String>,
+    id_b: Option<String>,
+    qty_a: Decimal,
+    qty_b: Decimal,
+}
+
+impl ClipFill {
+    fn complete(&self) -> bool {
+        (self.qty_a <= Decimal::ZERO || self.id_a.is_some())
+            && (self.qty_b <= Decimal::ZERO || self.id_b.is_some())
+    }
+
+    fn needs_a(&self) -> bool {
+        self.qty_a > Decimal::ZERO && self.id_a.is_none()
+    }
+
+    fn needs_b(&self) -> bool {
+        self.qty_b > Decimal::ZERO && self.id_b.is_none()
+    }
 }
 
 pub struct Engine {
@@ -217,6 +242,7 @@ impl Engine {
             plan,
             next_slice: 0,
             slices: self.cfg.twap.slice_count(),
+            open_clip: None,
         });
         self.submitted_a = Decimal::ZERO;
         self.submitted_b = Decimal::ZERO;
@@ -235,46 +261,68 @@ impl Engine {
         px_a: Decimal,
         px_b: Decimal,
     ) -> Result<String> {
-        let (slice_idx, slices, qty_a, qty_b) = {
-            let run = self.exec.as_ref().expect("TWAP run");
-            let (qty_a, qty_b) = paired_slice(
-                run.plan.qty_a,
-                run.plan.qty_b,
-                run.next_slice,
-                run.slices,
-                live.min_order_size,
-            );
-            (run.next_slice, run.slices, qty_a, qty_b)
+        let (slice_idx, slices, mut fill) = {
+            let run = self.exec.as_mut().expect("TWAP run");
+            if let Some(open) = run.open_clip.take() {
+                (run.next_slice, run.slices, open)
+            } else {
+                let (qty_a, qty_b) = paired_slice(
+                    run.plan.qty_a,
+                    run.plan.qty_b,
+                    run.next_slice,
+                    run.slices,
+                    live.min_order_size,
+                );
+                (
+                    run.next_slice,
+                    run.slices,
+                    ClipFill {
+                        id_a: None,
+                        id_b: None,
+                        qty_a,
+                        qty_b,
+                    },
+                )
+            }
         };
-
-        let clip_a = qty_a;
-        let clip_b = qty_b;
 
         if self.dry_run {
             info!(
                 slice = slice_idx + 1,
                 slices,
-                clip_a = %clip_a,
-                clip_b = %clip_b,
+                clip_a = %fill.qty_a,
+                clip_b = %fill.qty_b,
                 px_a = %px_a,
                 px_b = %px_b,
                 "dry-run: skip signing and submission"
             );
-        } else if clip_a > Decimal::ZERO || clip_b > Decimal::ZERO {
-            let (id_a, id_b) = self
-                .place_pair(live, px_a, px_b, clip_a, clip_b)
-                .await
-                .context("submit TWAP clip")?;
-            if !id_a.is_empty() {
-                self.last_order_a = Some(id_a);
-            }
-            if !id_b.is_empty() {
-                self.last_order_b = Some(id_b);
+            fill.id_a = (fill.qty_a > Decimal::ZERO).then(|| "dry-run-a".into());
+            fill.id_b = (fill.qty_b > Decimal::ZERO).then(|| "dry-run-b".into());
+        } else if fill.qty_a > Decimal::ZERO || fill.qty_b > Decimal::ZERO {
+            if let Err(err) = self.place_missing(live, px_a, px_b, &mut fill).await {
+                if let Some(run) = self.exec.as_mut() {
+                    run.open_clip = Some(fill);
+                }
+                warn!(error = %err, "clip hedge incomplete; will retry only the missing leg");
+                if self.tolerate_errors {
+                    return Ok(
+                        "hedge incomplete — retrying the missing leg (will not re-post the filled side)"
+                            .into(),
+                    );
+                }
+                return Err(err).context("submit TWAP clip");
             }
         }
 
-        self.submitted_a += clip_a;
-        self.submitted_b += clip_b;
+        if fill.id_a.as_deref().is_some_and(|id| id != "dry-run-a") {
+            self.last_order_a = fill.id_a.clone();
+        }
+        if fill.id_b.as_deref().is_some_and(|id| id != "dry-run-b") {
+            self.last_order_b = fill.id_b.clone();
+        }
+
+        self.submitted_a += fill.qty_a;
+        self.submitted_b += fill.qty_b;
 
         let finished = {
             let run = self.exec.as_mut().expect("TWAP run");
@@ -294,32 +342,50 @@ impl Engine {
         ))
     }
 
-    async fn place_pair(
+    async fn place_missing(
         &mut self,
         live: &QuoteSnapshot,
         px_a: Decimal,
         px_b: Decimal,
-        qty_a: Decimal,
-        qty_b: Decimal,
-    ) -> Result<(String, String)> {
+        fill: &mut ClipFill,
+    ) -> Result<()> {
         if self.trading.is_none() {
             self.trading = Some(connect_trading(&self.cfg).await?);
         }
         let t = self.trading.as_ref().expect("trading client");
-        let mut id_a = String::new();
-        let mut id_b = String::new();
-        if qty_a > Decimal::ZERO {
-            id_a = execution::place_buy_gtc_limit(&t.client, &t.signer, live.token_a, px_a, qty_a)
-                .await
-                .context("submit BUY outcome A")?;
+        if fill.needs_a() {
+            let id = execution::place_buy_gtc_limit(
+                &t.client,
+                &t.signer,
+                live.token_a,
+                px_a,
+                fill.qty_a,
+            )
+            .await
+            .context("submit BUY outcome A")?;
+            fill.id_a = Some(id);
         }
-        if qty_b > Decimal::ZERO {
-            id_b = execution::place_buy_gtc_limit(&t.client, &t.signer, live.token_b, px_b, qty_b)
-                .await
-                .context("submit BUY outcome B")?;
+        if fill.needs_b() {
+            let id = execution::place_buy_gtc_limit(
+                &t.client,
+                &t.signer,
+                live.token_b,
+                px_b,
+                fill.qty_b,
+            )
+            .await
+            .context("submit BUY outcome B after A filled")?;
+            fill.id_b = Some(id);
         }
-        info!(order_a = %id_a, order_b = %id_b, "Submitted TWAP BUY limits");
-        Ok((id_a, id_b))
+        info!(
+            order_a = fill.id_a.as_deref().unwrap_or(""),
+            order_b = fill.id_b.as_deref().unwrap_or(""),
+            "Submitted TWAP BUY limits"
+        );
+        if !fill.complete() {
+            anyhow::bail!("clip still missing a hedge leg after submit");
+        }
+        Ok(())
     }
 
     fn is_twap_ready(&self, now: Instant) -> bool {
@@ -463,4 +529,35 @@ pub async fn run_cycle(cfg: &BotConfig, dry_run: bool) -> Result<DashboardState>
     engine.oneshot = true;
     engine.cfg.twap.slices = 1;
     engine.tick().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    #[test]
+    fn retries_only_the_unfilled_hedge_leg() {
+        let fill = ClipFill {
+            id_a: Some("0xabc".into()),
+            id_b: None,
+            qty_a: dec!(10),
+            qty_b: dec!(10),
+        };
+        assert!(!fill.needs_a());
+        assert!(fill.needs_b());
+        assert!(!fill.complete());
+    }
+
+    #[test]
+    fn zero_qty_leg_does_not_need_an_order_id() {
+        let fill = ClipFill {
+            id_a: Some("0xabc".into()),
+            id_b: None,
+            qty_a: dec!(10),
+            qty_b: Decimal::ZERO,
+        };
+        assert!(fill.complete());
+        assert!(!fill.needs_b());
+    }
 }
