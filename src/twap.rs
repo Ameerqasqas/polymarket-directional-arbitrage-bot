@@ -141,6 +141,13 @@ pub fn slice_due_at(window: Duration, slice_idx: u32, slices: u32) -> Duration {
     window.mul_f64(f64::from(slice_idx) / f64::from(slices))
 }
 
+/// True once the TWAP execution horizon has passed.
+///
+/// Leftover clips must not be dumped back-to-back after a stalled poll loop.
+pub fn leftover_clips_expired(elapsed: Duration, window: Duration) -> bool {
+    elapsed > window
+}
+
 /// Clip sizes for both legs, or `(0, 0)` if either side is below `min_order_size`.
 ///
 /// Skipping both keeps the hedge intact: a dust clip on one outcome must not
@@ -231,5 +238,12 @@ mod tests {
         let (a, b) = paired_slice(dec!(40), dec!(40), 0, 2, dec!(5));
         assert_eq!(a, dec!(20));
         assert_eq!(b, dec!(20));
+    }
+
+    #[test]
+    fn leftover_clips_expire_after_the_window() {
+        let window = Duration::from_secs(60);
+        assert!(!leftover_clips_expired(Duration::from_secs(60), window));
+        assert!(leftover_clips_expired(Duration::from_millis(60_001), window));
     }
 }
