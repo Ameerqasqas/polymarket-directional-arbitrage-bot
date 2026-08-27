@@ -8,4 +8,5 @@ fn zero_slice_count_clamps_to_one_clip() {
         cooldown_secs: 0,
     };
     assert_eq!(cfg.slice_count(), 1);
+    assert_eq!(cfg.window().as_secs(), 60);
 }
