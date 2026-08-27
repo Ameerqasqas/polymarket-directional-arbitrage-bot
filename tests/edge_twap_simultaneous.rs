@@ -19,4 +19,5 @@ fn simultaneous_samples_use_the_last_print() {
     let q = tw.value(t0 + Duration::from_millis(1)).unwrap();
     assert_eq!(q.ask_a, dec!(0.40));
     assert_eq!(q.ask_b, dec!(0.50));
+    assert_eq!(q.sample_count, 2);
 }
