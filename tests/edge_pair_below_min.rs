@@ -10,5 +10,8 @@ fn rejects_when_paired_size_is_below_venue_minimum() {
         max_tilt_extra_shares: dec!(0),
         tilt_edge_gap: dec!(0.02),
     };
-    assert!(plan_sizes(dec!(0.48), dec!(0.49), dec!(0.50), &params, dec!(10)).is_none());
+    assert!(
+        plan_sizes(dec!(0.48), dec!(0.49), dec!(0.50), &params, dec!(10)).is_none(),
+        "q_pair below venue min must not quote"
+    );
 }
