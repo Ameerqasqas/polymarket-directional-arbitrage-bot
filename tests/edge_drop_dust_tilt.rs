@@ -14,4 +14,5 @@ fn dust_tilt_extra_is_dropped_to_keep_the_pair() {
     assert_eq!(plan.favored, FavoredOutcome::A);
     assert_eq!(plan.qty_a, plan.qty_b);
     assert_eq!(plan.qty_a, plan.paired_shares);
+    assert!(plan.paired_shares >= dec!(1));
 }
